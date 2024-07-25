@@ -26,7 +26,7 @@
 
 // Enable plotting of perflog data for comparing performance of different runs. This feature requires ImPlot.
 #ifndef IMGUI_TEST_ENGINE_ENABLE_IMPLOT
-#define IMGUI_TEST_ENGINE_ENABLE_IMPLOT 1
+#define IMGUI_TEST_ENGINE_ENABLE_IMPLOT 0
 #endif
 
 // Use relative path as this file may be compiled with different settings

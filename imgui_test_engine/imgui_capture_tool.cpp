@@ -44,7 +44,7 @@ Index of this file:
 // Compile time options:
 //#define IMGUI_STB_NAMESPACE            ImStb
 //#define IMGUI_STB_IMAGE_WRITE_FILENAME "my_folder/stb_image_write.h"
-//#define IMGUI_DISABLE_STB_IMAGE_WRITE_IMPLEMENTATION
+#define IMGUI_DISABLE_STB_IMAGE_WRITE_IMPLEMENTATION
 
 // stb_image_write
 #ifdef _MSC_VER

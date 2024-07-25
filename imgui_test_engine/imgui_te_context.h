@@ -361,6 +361,7 @@ struct IMGUI_API ImGuiTestContext
     void        MouseClickOnVoid(ImGuiMouseButton button = 0, ImGuiViewport* viewport = NULL);
     ImGuiWindow*FindHoveredWindowAtPos(const ImVec2& pos);
     bool        FindExistingVoidPosOnViewport(ImGuiViewport* viewport, ImVec2* out);
+    ImVec2      GetMousePos();  // MODDER_ADDON
 
     // Mouse inputs: Viewports
     // - This is automatically called by SetRef() and any mouse action taking an item reference (e.g. ItemClick("button"), MouseClick("button"))
@@ -409,7 +410,7 @@ struct IMGUI_API ImGuiTestContext
     ImGuiTestItemInfo   ItemInfo(ImGuiTestRef ref, ImGuiTestOpFlags flags = ImGuiTestOpFlags_None);
     ImGuiTestItemInfo   ItemInfoOpenFullPath(ImGuiTestRef ref, ImGuiTestOpFlags flags = ImGuiTestOpFlags_None);
     ImGuiID             ItemInfoHandleWildcardSearch(const char* wildcard_prefix_start, const char* wildcard_prefix_end, const char* wildcard_suffix_start);
-    ImGuiTestItemInfo   ItemInfoNull() { return ImGuiTestItemInfo(); }
+    ImGuiTestItemInfo   ItemInfoNull();
     void                GatherItems(ImGuiTestItemList* out_list, ImGuiTestRef parent, int depth = -1);
 
     // Item/Widgets manipulation

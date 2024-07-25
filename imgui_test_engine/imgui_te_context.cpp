@@ -1086,6 +1086,11 @@ ImGuiTestItemInfo ImGuiTestContext::ItemInfoOpenFullPath(ImGuiTestRef ref, ImGui
     return item;
 }
 
+ImGuiTestItemInfo ImGuiTestContext::ItemInfoNull()
+{
+    return ImGuiTestItemInfo();
+}
+
 // Find a window given a path or an ID.
 // In the case of when a path is passed, this handle finding child windows as well.
 // e.g.
@@ -2262,6 +2267,13 @@ bool    ImGuiTestContext::FindExistingVoidPosOnViewport(ImGuiViewport* viewport,
         }
     return false;
 }
+
+// MODDER_ADDON
+ImVec2  ImGuiTestContext::GetMousePos()
+{
+    return Inputs->MousePosValue;
+}
+// MODDER_ADDON
 
 ImVec2   ImGuiTestContext::GetPosOnVoid(ImGuiViewport* viewport)
 {
