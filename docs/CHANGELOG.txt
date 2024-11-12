@@ -5,6 +5,48 @@ CHANGELOG
    Those changes are not all listed here.
 ** For a while this is going to ONLY INCLUDE BREAKING CHANGES.
 
+2024/10/17:
+- TestEngine: updated for various internal changes in v1.91.4.
+- TestEngine: *BREAKING* renamed ImGuiTestItemInfo's InFlags to ItemFlags. 
+  (it's unlikely to have been used by end-user or tests. Please let us know if you did!).
+
+2024/10/02:
+- TestEngine: moved processing of TestFunc from being done post-NewFrame to being done pre-EndFrame.
+  This makes all the timing/order matches between tests using GuiFunc and tests relying on gui code
+  submitted independently.
+    Prev: NewFrame -> test's GuiFunc -> test's TestFunc -> other UI -> EndFrame
+    Now:  NewFrame -> test's GuiFunc -> other UI -> test's TestFunc -> EndFrame
+  This doesn't make a difference for TestSuite.
+  This _should_ not make a difference for end-user, other than making all timing/order matches
+  between TestSuite and user apps not using test's GuiFunc. Different order means that subtle
+  ordering issues applying to user not using GuiFunc would have been uncaught.
+
+2024/09/27:
+- TestEngine: updated for support for error handling/recovery mechanism from v1.91.3.
+- TestEngine: fixed issues dealing with covered ImGuiWindowFlags_NoBringToFrontOnFocus windows.
+
+2024/09/17:
+- TestEngine: now knows how mouse aim at windows with the ImGuiWindowFlags_NoBringToFrontOnFocus
+  flag when they are covered by other windows (when clicking or Ctrl+tabbing doesn't work).
+- TestEngine: opening source file default to use shell open if io.SrcFileOpenFunc is not set. (#56)
+- TestEngine: UI: opening source file prints filename/line_no in debug output to facilitate
+  double-clicking in IDE. (#56) [@learn-more]
+
+2024/09/16:
+- TestEngine: Added ViewportPlatform_SetWindowPos() and ViewportPlatform_SetWindowSize()
+  functions to enforce or simulate platform move/resize.
+
+2024/09/12:
+- TestEngine: fixed a crash when item/window stops being submitted (or test is aborted)
+  in the middle of a MouseMove() action performing a long scroll.
+
+2024/09/10:
+- TestEngine: CaptureTool: rename ImGuiCaptureFlags_IncludeTooltipsAndPopups to
+  ImGuiCaptureFlags_IncludePopups, as tooltips are always included by default in the capture.
+
+2024/08/22
+- TestEngine: fixes for internal changes and ImGuiPlatformIO use in 1.91.1 WIP.
+
 2024/07/08:
 - TestEngine: fixes an issue browsing menus inside a popup not inside a menu-bar. (#43) [@peterigz]
 

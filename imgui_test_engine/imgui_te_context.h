@@ -258,7 +258,6 @@ struct IMGUI_API ImGuiTestContext
     //-------------------------------------------------------------------------
 
     // Main control
-    void            RecoverFromUiContextErrors();
     void            Finish(ImGuiTestStatus status = ImGuiTestStatus_Success);                       // Set test status and stop running. Usually called when running test logic from GuiFunc() only.
     ImGuiTestStatus RunChildTest(const char* test_name, ImGuiTestRunFlags flags = 0);               // [Experimental] Run another test from the current test.
     template <typename T> T& GetVars()      { IM_ASSERT(UserVars != NULL); return *(T*)(UserVars); }// Campanion to using t->SetVarsDataType<>(). FIXME: Assert to compare sizes
@@ -484,8 +483,8 @@ struct IMGUI_API ImGuiTestContext
     // IMPORTANT: Those function may alter Platform state (unless using the "Mock Viewport" backend). Use carefully.
     // Those are mostly useful to simulate OS actions and testing of viewport-specific features, may not be useful to most users.
 #ifdef IMGUI_HAS_VIEWPORT
-    //void      ViewportPlatform_SetWindowPos(ImGuiViewport* viewport, const ImVec2& pos);
-    //void      ViewportPlatform_SetWindowSize(ImGuiViewport* viewport, const ImVec2& size);
+    void        ViewportPlatform_SetWindowPos(ImGuiViewport* viewport, const ImVec2& pos);
+    void        ViewportPlatform_SetWindowSize(ImGuiViewport* viewport, const ImVec2& size);
     void        ViewportPlatform_SetWindowFocus(ImGuiViewport* viewport);
     void        ViewportPlatform_CloseWindow(ImGuiViewport* viewport);
 #endif
@@ -521,9 +520,9 @@ struct IMGUI_API ImGuiTestContext
 #endif
 
     // [Internal]
-    // FIXME: Aim to remove this system...
-    void        ForeignWindowsHideOverPos(ImVec2 pos, ImGuiWindow** ignore_list);
-    void        ForeignWindowsUnhideAll();
+    void        _MakeAimingSpaceOverPos(ImGuiViewport* viewport, ImGuiWindow* over_window, const ImVec2& over_pos); // Move windows covering 'window' at pos.
+    void        _ForeignWindowsHideOverPos(const ImVec2& pos, ImGuiWindow** ignore_list);  // FIXME: Aim to remove this system...
+    void        _ForeignWindowsUnhideAll();                                                // FIXME: Aim to remove this system...
 };
 
 //-------------------------------------------------------------------------

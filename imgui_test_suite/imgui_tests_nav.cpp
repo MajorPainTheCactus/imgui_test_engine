@@ -18,6 +18,9 @@
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #endif
+#if IMGUI_VERSION_NUM < 19104
+#define ImGuiChildFlags_Borders ImGuiChildFlags_Border
+#endif
 
 //-------------------------------------------------------------------------
 // Ideas/Specs for future tests
@@ -206,7 +209,7 @@ void RegisterTests_Nav(ImGuiTestEngine* e)
 
     // ## Test that Alt toggle layer, test that AltGr doesn't.
     // ## Test that toggling layer steals active id.
-    // ## Test that toggling layer is canceled by character typing (#370)
+    // ## Test that toggling layer is canceled by character typing or any other key (#370)
     // ## Test that ESC closes a menu
     // All those are performed on child and popups windows as well.
     t = IM_REGISTER_TEST(e, "nav", "nav_menu_alt_key");
@@ -337,6 +340,18 @@ void RegisterTests_Nav(ImGuiTestEngine* e)
             ctx->KeyUp(ImGuiMod_Alt);
             IM_CHECK(g.NavLayer == ImGuiNavLayer_Main);
             IM_CHECK_EQ(g.ActiveId, input_id);
+            ctx->KeyPress(ImGuiKey_Escape);
+
+#if IMGUI_VERSION_NUM >= 19111
+            // Test that toggling layer is canceled by character typing (#370)
+            IM_CHECK_EQ(g.ActiveId, 0u);
+            ctx->KeyDown(ImGuiMod_Alt);
+            ctx->KeyPress(ImGuiKey_Apostrophe);
+            ctx->KeyUp(ImGuiMod_Alt);
+            IM_CHECK(g.NavLayer == ImGuiNavLayer_Main);
+            IM_CHECK_EQ(g.ActiveId, 0u);
+#endif
+
 #endif
         }
     };
@@ -412,7 +427,7 @@ void RegisterTests_Nav(ImGuiTestEngine* e)
                 if (ImGui::BeginMenu("Submenu2"))
                 {
                     bool use_child = ctx->Test->ArgVariant == 1;
-                    if (!use_child || ImGui::BeginChild("Child", ImVec2(100.f, 30.f), ImGuiChildFlags_Border))
+                    if (!use_child || ImGui::BeginChild("Child", ImVec2(100.f, 30.f), ImGuiChildFlags_Borders))
                     {
                         if (ImGui::BeginTabBar("Tabs"))
                         {
@@ -446,7 +461,7 @@ void RegisterTests_Nav(ImGuiTestEngine* e)
             ctx->KeyPress(ImGuiKey_RightArrow);
 #if IMGUI_VERSION_NUM >= 19018
             IM_CHECK(g.NavId == ctx->GetID("//##Menu_01/A"));
-            IM_CHECK(g.NavDisableHighlight == false);
+            IM_CHECK(g.NavCursorVisible == true);
 #endif
             ctx->KeyPress(ImGuiKey_DownArrow);
             IM_CHECK(g.NavId == ctx->GetID("//##Menu_01/B"));
@@ -586,7 +601,7 @@ void RegisterTests_Nav(ImGuiTestEngine* e)
 
         ImGui::Begin("Window 2", NULL, ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize);
         ImGui::Button("Button Out");
-        ImGui::BeginChild("Child", ImVec2(50, 50), ImGuiChildFlags_Border);
+        ImGui::BeginChild("Child", ImVec2(50, 50), ImGuiChildFlags_Borders);
         ImGui::Button("Button In");
         ImGui::EndChild();
         ImGui::End();
@@ -643,6 +658,14 @@ void RegisterTests_Nav(ImGuiTestEngine* e)
 
             ctx->KeyPress(chord_ctrl_tab);
             IM_CHECK(g.NavWindow == ctx->GetWindowByRef("Window 1"));
+
+            // Test CTRL+Tabbing from null focus
+#if IMGUI_VERSION_NUM >= 19134
+            ImGui::FocusWindow(NULL);
+            //ctx->WindowFocus(0u);
+            ctx->KeyPress(chord_ctrl_tab);
+            IM_CHECK(g.NavWindow == ctx->GetWindowByRef("Window 1"));
+#endif
         }
     };
 
@@ -707,7 +730,7 @@ void RegisterTests_Nav(ImGuiTestEngine* e)
         ImGui::End();
 
         ImGui::Begin("Window 2", NULL, ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize);
-        ImGui::BeginChild("Child", ImVec2(50, 50), ImGuiChildFlags_Border);
+        ImGui::BeginChild("Child", ImVec2(50, 50), ImGuiChildFlags_Borders);
         ImGui::Button("Button 2");
         ImGui::EndChild();
         ImGui::End();
@@ -1066,7 +1089,7 @@ void RegisterTests_Nav(ImGuiTestEngine* e)
         ImGui::Begin("Window 1", NULL, ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize);
         ImGui::Button("Button 1");
         ImGui::Button("Button 2");
-        ImGui::BeginChild("Child", ImVec2(100, 100), ImGuiChildFlags_Border);
+        ImGui::BeginChild("Child", ImVec2(100, 100), ImGuiChildFlags_Borders);
         ImGui::Button("Button 3");
         ImGui::Button("Button 4");
         ImGui::EndChild();
@@ -1240,7 +1263,7 @@ void RegisterTests_Nav(ImGuiTestEngine* e)
 
         // ...Unless flattened child
 #if IMGUI_VERSION_NUM >= 19002
-        ImGui::BeginChild("Child 3", ImVec2(100, 100), ImGuiChildFlags_Border | ImGuiChildFlags_NavFlattened);
+        ImGui::BeginChild("Child 3", ImVec2(100, 100), ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
         IM_CHECK_EQ(ImGui::GetCurrentFocusScope(), focus_scope_id); // New child
         ImGui::EndChild();
 #endif
@@ -1564,32 +1587,32 @@ void RegisterTests_Nav(ImGuiTestEngine* e)
         ImGuiContext& g = *ctx->UiContext;
         ctx->SetRef("Dear ImGui Demo");
         ctx->MouseMove("Help");
-        IM_CHECK(g.NavDisableHighlight == true);
-        IM_CHECK(g.NavDisableMouseHover == false);
+        IM_CHECK(g.NavCursorVisible == false);
+        IM_CHECK(g.NavHighlightItemUnderNav == false);
         ctx->NavMoveTo("Configuration");
-        IM_CHECK(g.NavDisableHighlight == false);
-        IM_CHECK(g.NavDisableMouseHover == true);
+        IM_CHECK(g.NavCursorVisible == true);
+        IM_CHECK(g.NavHighlightItemUnderNav == true);
         ctx->KeyPress(ImGuiKey_UpArrow);
         IM_CHECK(g.NavId == ctx->GetID("Help"));
-        IM_CHECK(g.NavDisableHighlight == false);
-        IM_CHECK(g.NavDisableMouseHover == true);
+        IM_CHECK(g.NavCursorVisible == true);
+        IM_CHECK(g.NavHighlightItemUnderNav == true);
         ctx->MouseMove("Help");
-        IM_CHECK(g.NavDisableHighlight == false); // Moving mouse doesn't set this to true: rect will be visible but NavId not marked as "hovered"
-        IM_CHECK(g.NavDisableMouseHover == false);
+        IM_CHECK(g.NavCursorVisible == true); // Moving mouse doesn't set this to true: rect will be visible but NavId not marked as "hovered"
+        IM_CHECK(g.NavHighlightItemUnderNav == false);
 
         ctx->KeyPress(ImGuiMod_Alt);
-        IM_CHECK(g.NavDisableHighlight == false);
-        IM_CHECK(g.NavDisableMouseHover == true);
+        IM_CHECK(g.NavCursorVisible == true);
+        IM_CHECK(g.NavHighlightItemUnderNav == true);
 
 #if IMGUI_VERSION_NUM >= 18992
         // Switching from Mouse to keyboard
         ctx->ItemOpen("Inputs & Focus");
         ctx->ItemOpen("Tabbing");
         ctx->ItemClick("Tabbing/2");
-        IM_CHECK(g.NavDisableHighlight == true);
+        IM_CHECK(g.NavCursorVisible == false);
         ctx->KeyPress(ImGuiKey_Tab);
         IM_CHECK_EQ(g.NavId, ctx->GetID("Tabbing/3"));
-        IM_CHECK(g.NavDisableHighlight == false);
+        IM_CHECK(g.NavCursorVisible == true);
 #endif
     };
 
@@ -2095,7 +2118,7 @@ void RegisterTests_Nav(ImGuiTestEngine* e)
         for (int n = 0; n < 4; n++)
             ImGui::InputInt(Str30f("Input%d", n).c_str(), &vars.Int1, 0, 0);
 
-        ImGui::BeginChild("Child 1", ImVec2(0, ImGui::GetFrameHeightWithSpacing() * 3), ImGuiChildFlags_Border | ImGuiChildFlags_NavFlattened);
+        ImGui::BeginChild("Child 1", ImVec2(0, ImGui::GetFrameHeightWithSpacing() * 3), ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
         for (int n = 4; n < 8; n++)
             ImGui::InputInt(Str30f("Input%d", n).c_str(), &vars.Int1, 0, 0);
         ImGui::EndChild();
@@ -2103,10 +2126,10 @@ void RegisterTests_Nav(ImGuiTestEngine* e)
         for (int n = 8; n < 10; n++)
             ImGui::InputInt(Str30f("Input%d", n).c_str(), &vars.Int1, 0, 0);
 
-        ImGui::BeginChild("Child 2", ImVec2(0, ImGui::GetFrameHeightWithSpacing() * 3), ImGuiChildFlags_Border | ImGuiChildFlags_NavFlattened);
+        ImGui::BeginChild("Child 2", ImVec2(0, ImGui::GetFrameHeightWithSpacing() * 3), ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
         for (int n = 10; n < 14; n++)
             ImGui::InputInt(Str30f("Input%d", n).c_str(), &vars.Int1, 0, 0);
-        ImGui::BeginChild("Child 3", ImVec2(0, ImGui::GetFrameHeightWithSpacing() * 3), ImGuiChildFlags_Border | ImGuiChildFlags_NavFlattened);
+        ImGui::BeginChild("Child 3", ImVec2(0, ImGui::GetFrameHeightWithSpacing() * 3), ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
         for (int n = 14; n < 18; n++)
             ImGui::InputInt(Str30f("Input%d", n).c_str(), &vars.Int1, 0, 0);
         ImGui::EndChild();

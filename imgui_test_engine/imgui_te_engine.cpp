@@ -71,10 +71,14 @@ static void ImGuiTestEngine_ProcessTestQueue(ImGuiTestEngine* engine);
 static void ImGuiTestEngine_ClearTests(ImGuiTestEngine* engine);
 static void ImGuiTestEngine_PreNewFrame(ImGuiTestEngine* engine, ImGuiContext* ui_ctx);
 static void ImGuiTestEngine_PostNewFrame(ImGuiTestEngine* engine, ImGuiContext* ui_ctx);
+static void ImGuiTestEngine_PreEndFrame(ImGuiTestEngine* engine, ImGuiContext* ui_ctx);
 static void ImGuiTestEngine_PreRender(ImGuiTestEngine* engine, ImGuiContext* ui_ctx);
 static void ImGuiTestEngine_PostRender(ImGuiTestEngine* engine, ImGuiContext* ui_ctx);
 static void ImGuiTestEngine_UpdateHooks(ImGuiTestEngine* engine);
 static void ImGuiTestEngine_RunGuiFunc(ImGuiTestEngine* engine);
+static void ImGuiTestEngine_RunTestFunc(ImGuiTestEngine* engine);
+static void ImGuiTestEngine_ErrorRecoverySetup(ImGuiTestEngine* engine);
+static void ImGuiTestEngine_ErrorRecoveryRun(ImGuiTestEngine* engine);
 static void ImGuiTestEngine_TestQueueCoroutineMain(void* engine_opaque);
 
 // Settings
@@ -129,6 +133,14 @@ ImGuiTestEngine::~ImGuiTestEngine()
     IM_DELETE(UiFilterPerfs);
 }
 
+// Using named functions here instead of lambda gives nicer call-stacks (mostly because we frequently step in PostNewFrame)
+static void ImGuiTestEngine_ShutdownHook(ImGuiContext* ui_ctx, ImGuiContextHook* hook)      { ImGuiTestEngine_UnbindImGuiContext((ImGuiTestEngine*)hook->UserData, ui_ctx); }
+static void ImGuiTestEngine_PreNewFrameHook(ImGuiContext* ui_ctx, ImGuiContextHook* hook)   { ImGuiTestEngine_PreNewFrame((ImGuiTestEngine*)hook->UserData, ui_ctx); }
+static void ImGuiTestEngine_PostNewFrameHook(ImGuiContext* ui_ctx, ImGuiContextHook* hook)  { ImGuiTestEngine_PostNewFrame((ImGuiTestEngine*)hook->UserData, ui_ctx); }
+static void ImGuiTestEngine_PreEndFrameHook(ImGuiContext* ui_ctx, ImGuiContextHook* hook)   { ImGuiTestEngine_PreEndFrame((ImGuiTestEngine*)hook->UserData, ui_ctx); }
+static void ImGuiTestEngine_PreRenderHook(ImGuiContext* ui_ctx, ImGuiContextHook* hook)     { ImGuiTestEngine_PreRender((ImGuiTestEngine*)hook->UserData, ui_ctx); }
+static void ImGuiTestEngine_PostRenderHook(ImGuiContext* ui_ctx, ImGuiContextHook* hook)    { ImGuiTestEngine_PostRender((ImGuiTestEngine*)hook->UserData, ui_ctx); }
+
 static void ImGuiTestEngine_BindImGuiContext(ImGuiTestEngine* engine, ImGuiContext* ui_ctx)
 {
     IM_ASSERT(engine->UiContextTarget == ui_ctx);
@@ -149,27 +161,32 @@ static void ImGuiTestEngine_BindImGuiContext(ImGuiTestEngine* engine, ImGuiConte
     // Install generic context hooks facility
     ImGuiContextHook hook;
     hook.Type = ImGuiContextHookType_Shutdown;
-    hook.Callback = [](ImGuiContext* ui_ctx, ImGuiContextHook* hook) { ImGuiTestEngine_UnbindImGuiContext((ImGuiTestEngine*)hook->UserData, ui_ctx); };
+    hook.Callback = ImGuiTestEngine_ShutdownHook;
     hook.UserData = (void*)engine;
     ImGui::AddContextHook(ui_ctx, &hook);
 
     hook.Type = ImGuiContextHookType_NewFramePre;
-    hook.Callback = [](ImGuiContext* ui_ctx, ImGuiContextHook* hook) { ImGuiTestEngine_PreNewFrame((ImGuiTestEngine*)hook->UserData, ui_ctx); };
+    hook.Callback = ImGuiTestEngine_PreNewFrameHook;
     hook.UserData = (void*)engine;
     ImGui::AddContextHook(ui_ctx, &hook);
 
     hook.Type = ImGuiContextHookType_NewFramePost;
-    hook.Callback = [](ImGuiContext* ui_ctx, ImGuiContextHook* hook) { ImGuiTestEngine_PostNewFrame((ImGuiTestEngine*)hook->UserData, ui_ctx); };
+    hook.Callback = ImGuiTestEngine_PostNewFrameHook;
+    hook.UserData = (void*)engine;
+    ImGui::AddContextHook(ui_ctx, &hook);
+
+    hook.Type = ImGuiContextHookType_EndFramePre;
+    hook.Callback = ImGuiTestEngine_PreEndFrameHook;
     hook.UserData = (void*)engine;
     ImGui::AddContextHook(ui_ctx, &hook);
 
     hook.Type = ImGuiContextHookType_RenderPre;
-    hook.Callback = [](ImGuiContext* ui_ctx, ImGuiContextHook* hook) { ImGuiTestEngine_PreRender((ImGuiTestEngine*)hook->UserData, ui_ctx); };
+    hook.Callback = ImGuiTestEngine_PreRenderHook;
     hook.UserData = (void*)engine;
     ImGui::AddContextHook(ui_ctx, &hook);
 
     hook.Type = ImGuiContextHookType_RenderPost;
-    hook.Callback = [](ImGuiContext* ui_ctx, ImGuiContextHook* hook) { ImGuiTestEngine_PostRender((ImGuiTestEngine*)hook->UserData, ui_ctx); };
+    hook.Callback = ImGuiTestEngine_PostRenderHook;
     hook.UserData = (void*)engine;
     ImGui::AddContextHook(ui_ctx, &hook);
 
@@ -658,39 +675,69 @@ void ImGuiTestEngine_ApplyInputToImGuiContext(ImGuiTestEngine* engine)
                 io.AddInputCharacter(input.Char);
                 break;
             }
+#ifdef IMGUI_HAS_VIEWPORT
             case ImGuiTestInputType_ViewportFocus:
             {
-#ifdef IMGUI_HAS_VIEWPORT
-                if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
-                {
-                    IM_ASSERT(engine->TestContext != NULL);
-                    ImGuiViewport* viewport = ImGui::FindViewportByID(input.ViewportId);
-                    if (viewport == NULL)
-                        engine->TestContext->LogError("ViewportPlatform_SetWindowFocus(%08X): cannot find viewport anymore!", input.ViewportId);
-                    else if (platform_io.Platform_SetWindowSize == NULL)
-                        engine->TestContext->LogError("ViewportPlatform_SetWindowFocus(%08X): backend's Platform_SetWindowSize() is not set", input.ViewportId);
-                    else
-                        platform_io.Platform_SetWindowFocus(viewport);
-                }
-#endif
+                if ((io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) == 0)
+                    break;
+                IM_ASSERT(engine->TestContext != NULL);
+                ImGuiViewport* viewport = ImGui::FindViewportByID(input.ViewportId);
+                if (viewport == NULL)
+                    engine->TestContext->LogError("ViewportPlatform_SetWindowFocus(%08X): cannot find viewport anymore!", input.ViewportId);
+                else if (platform_io.Platform_SetWindowFocus == NULL)
+                    engine->TestContext->LogError("ViewportPlatform_SetWindowFocus(%08X): backend's Platform_SetWindowFocus() is not set", input.ViewportId);
+                else
+                    platform_io.Platform_SetWindowFocus(viewport);
+                break;
+            }
+            case ImGuiTestInputType_ViewportSetPos:
+            {
+                if ((io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) == 0)
+                    break;
+                IM_ASSERT(engine->TestContext != NULL);
+                ImGuiViewport* viewport = ImGui::FindViewportByID(input.ViewportId);
+                if (viewport == NULL)
+                    engine->TestContext->LogError("ViewportPlatform_SetWindowPos(%08X): cannot find viewport anymore!", input.ViewportId);
+                else if (platform_io.Platform_SetWindowPos == NULL)
+                    engine->TestContext->LogError("ViewportPlatform_SetWindowPos(%08X): backend's Platform_SetWindowPos() is not set", input.ViewportId);
+                else
+                    platform_io.Platform_SetWindowPos(viewport, input.ViewportPosSize);
+                break;
+            }
+            case ImGuiTestInputType_ViewportSetSize:
+            {
+                if ((io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) == 0)
+                    break;
+                IM_ASSERT(engine->TestContext != NULL);
+                ImGuiViewport* viewport = ImGui::FindViewportByID(input.ViewportId);
+                if (viewport == NULL)
+                    engine->TestContext->LogError("ViewportPlatform_SetWindowSize(%08X): cannot find viewport anymore!", input.ViewportId);
+                else if (platform_io.Platform_SetWindowPos == NULL)
+                    engine->TestContext->LogError("ViewportPlatform_SetWindowSize(%08X): backend's Platform_SetWindowSize() is not set", input.ViewportId);
+                else
+                    platform_io.Platform_SetWindowSize(viewport, input.ViewportPosSize);
                 break;
             }
             case ImGuiTestInputType_ViewportClose:
             {
-#ifdef IMGUI_HAS_VIEWPORT
-                if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
-                {
-                    IM_ASSERT(engine->TestContext != NULL);
-                    ImGuiViewport* viewport = ImGui::FindViewportByID(input.ViewportId);
-                    if (viewport == NULL)
-                        engine->TestContext->LogError("ViewportPlatform_CloseWindow(%08X): cannot find viewport anymore!", input.ViewportId);
-                    else
-                        viewport->PlatformRequestClose = true;
-                    // FIXME: doesn't apply to actual backend
-                }
-#endif
+                if ((io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) == 0)
+                    break;
+                IM_ASSERT(engine->TestContext != NULL);
+                ImGuiViewport* viewport = ImGui::FindViewportByID(input.ViewportId);
+                if (viewport == NULL)
+                    engine->TestContext->LogError("ViewportPlatform_CloseWindow(%08X): cannot find viewport anymore!", input.ViewportId);
+                else
+                    viewport->PlatformRequestClose = true;
+                // FIXME: doesn't apply to actual backend
                 break;
             }
+#else
+            case ImGuiTestInputType_ViewportFocus:
+            case ImGuiTestInputType_ViewportSetPos:
+            case ImGuiTestInputType_ViewportSetSize:
+            case ImGuiTestInputType_ViewportClose:
+                break;
+#endif
             case ImGuiTestInputType_None:
             default:
                 break;
@@ -836,18 +883,15 @@ static void ImGuiTestEngine_PostNewFrame(ImGuiTestEngine* engine, ImGuiContext* 
 
     // Call user GUI function
     ImGuiTestEngine_RunGuiFunc(engine);
+}
 
-    // Process on-going queues in a coroutine
-    // Run the test coroutine. This will resume the test queue from either the last point the test called YieldFromCoroutine(),
-    // or the loop in ImGuiTestEngine_TestQueueCoroutineMain that does so if no test is running.
-    // If you want to breakpoint the point execution continues in the test code, breakpoint the exit condition in YieldFromCoroutine()
-    const int input_queue_size_before = ui_ctx->InputEventsQueue.Size;
-    engine->IO.CoroutineFuncs->RunFunc(engine->TestQueueCoroutine);
+static void ImGuiTestEngine_PreEndFrame(ImGuiTestEngine* engine, ImGuiContext* ui_ctx)
+{
+    IM_UNUSED(ui_ctx);
 
-    // Events added by TestFunc() marked automaticaly to not be deleted
-    if (engine->TestContext && (engine->TestContext->RunFlags & ImGuiTestRunFlags_EnableRawInputs))
-        for (int n = input_queue_size_before; n < ui_ctx->InputEventsQueue.Size; n++)
-            ui_ctx->InputEventsQueue[n].AddedByTestEngine = true;
+    // Call user Test Function
+    // (process on-going queues in a coroutine)
+    ImGuiTestEngine_RunTestFunc(engine);
 
     // Update hooks and output flags
     ImGuiTestEngine_UpdateHooks(engine);
@@ -909,12 +953,27 @@ static void ImGuiTestEngine_RunGuiFunc(ImGuiTestEngine* engine)
             ctx->ActiveFunc = backup_active_func;
         }
 
-        // Safety net
-        //if (ctx->Test->Status == ImGuiTestStatus_Error)
-        ctx->RecoverFromUiContextErrors();
+        ImGuiTestEngine_ErrorRecoveryRun(engine);
     }
     if (ctx)
         ctx->FirstGuiFrame = false;
+}
+
+static void ImGuiTestEngine_RunTestFunc(ImGuiTestEngine* engine)
+{
+    ImGuiContext* ui_ctx = engine->UiContextTarget;
+
+    // Process on-going queues in a coroutine
+    // Run the test coroutine. This will resume the test queue from either the last point the test called YieldFromCoroutine(),
+    // or the loop in ImGuiTestEngine_TestQueueCoroutineMain that does so if no test is running.
+    // If you want to breakpoint the point execution continues in the test code, breakpoint the exit condition in YieldFromCoroutine()
+    const int input_queue_size_before = ui_ctx->InputEventsQueue.Size;
+    engine->IO.CoroutineFuncs->RunFunc(engine->TestQueueCoroutine);
+
+    // Events added by TestFunc() marked automaticaly to not be deleted
+    if (engine->TestContext && (engine->TestContext->RunFlags & ImGuiTestRunFlags_EnableRawInputs))
+        for (int n = input_queue_size_before; n < ui_ctx->InputEventsQueue.Size; n++)
+            ui_ctx->InputEventsQueue[n].AddedByTestEngine = true;
 }
 
 // Main function for the test coroutine
@@ -1420,19 +1479,33 @@ static void ImGuiTestEngine_UpdateHooks(ImGuiTestEngine* engine)
 struct ImGuiTestContextUiContextBackup
 {
     ImGuiIO             IO;
+#if IMGUI_VERSION_NUM >= 19103
+    ImGuiPlatformIO     PlatformIO;
+#endif
     ImGuiStyle          Style;
     ImGuiDebugLogFlags  DebugLogFlags;
     ImGuiKeyChord       ConfigNavWindowingKeyNext;
     ImGuiKeyChord       ConfigNavWindowingKeyPrev;
+#if IMGUI_VERSION_NUM >= 19123
+    ImGuiErrorCallback  ErrorCallback;
+    void*               ErrorCallbackUserData;
+#endif
 
     void Backup(ImGuiContext& g)
     {
         IO = g.IO;
+#if IMGUI_VERSION_NUM >= 19103
+        PlatformIO = g.PlatformIO;
+#endif
         Style = g.Style;
         DebugLogFlags = g.DebugLogFlags;
 #if IMGUI_VERSION_NUM >= 18837
         ConfigNavWindowingKeyNext = g.ConfigNavWindowingKeyNext;
         ConfigNavWindowingKeyPrev = g.ConfigNavWindowingKeyPrev;
+#endif
+#if IMGUI_VERSION_NUM >= 19123
+        ErrorCallback = g.ErrorCallback;
+        ErrorCallbackUserData = g.ErrorCallbackUserData;
 #endif
         memset(IO.MouseDown, 0, sizeof(IO.MouseDown));
         for (int n = 0; n < IM_ARRAYSIZE(IO.KeysData); n++)
@@ -1444,18 +1517,31 @@ struct ImGuiTestContextUiContextBackup
         IO.MetricsActiveAllocations = g.IO.MetricsActiveAllocations;
 #endif
         g.IO = IO;
+#if IMGUI_VERSION_NUM >= 19103
+        g.PlatformIO = PlatformIO;
+#endif
         g.Style = Style;
         g.DebugLogFlags = DebugLogFlags;
 #if IMGUI_VERSION_NUM >= 18837
         g.ConfigNavWindowingKeyNext = ConfigNavWindowingKeyNext;
         g.ConfigNavWindowingKeyPrev = ConfigNavWindowingKeyPrev;
 #endif
+#if IMGUI_VERSION_NUM >= 19123
+        g.ErrorCallback = ErrorCallback;
+        g.ErrorCallbackUserData = ErrorCallbackUserData;
+#endif
     }
     void RestoreClipboardFuncs(ImGuiContext& g)
     {
+#if IMGUI_VERSION_NUM >= 19103
+        g.PlatformIO.Platform_GetClipboardTextFn = PlatformIO.Platform_GetClipboardTextFn;
+        g.PlatformIO.Platform_SetClipboardTextFn = PlatformIO.Platform_SetClipboardTextFn;
+        g.PlatformIO.Platform_ClipboardUserData = PlatformIO.Platform_ClipboardUserData;
+#else
         g.IO.GetClipboardTextFn = IO.GetClipboardTextFn;
         g.IO.SetClipboardTextFn = IO.SetClipboardTextFn;
         g.IO.ClipboardUserData = IO.ClipboardUserData;
+#endif
     }
 };
 
@@ -1592,6 +1678,21 @@ void ImGuiTestEngine_RunTest(ImGuiTestEngine* engine, ImGuiTestContext* parent_c
     // Setup IO: override clipboard
     if ((ctx->RunFlags & ImGuiTestRunFlags_GuiFuncOnly) == 0)
     {
+#if IMGUI_VERSION_NUM >= 19103
+        ImGuiPlatformIO& platform_io = ctx->UiContext->PlatformIO;
+        platform_io.Platform_GetClipboardTextFn = [](ImGuiContext* ui_ctx) -> const char*
+        {
+            ImGuiTestContext* ctx = (ImGuiTestContext*)ui_ctx->PlatformIO.Platform_ClipboardUserData;
+            return ctx->Clipboard.empty() ? "" : ctx->Clipboard.Data;
+        };
+        platform_io.Platform_SetClipboardTextFn = [](ImGuiContext* ui_ctx, const char* text)
+        {
+            ImGuiTestContext* ctx = (ImGuiTestContext*)ui_ctx->PlatformIO.Platform_ClipboardUserData;
+            ctx->Clipboard.resize((int)strlen(text) + 1);
+            strcpy(ctx->Clipboard.Data, text);
+        };
+        platform_io.Platform_ClipboardUserData = ctx;
+#else
         io.GetClipboardTextFn = [](void* user_data) -> const char*
         {
             ImGuiTestContext* ctx = (ImGuiTestContext*)user_data;
@@ -1604,7 +1705,11 @@ void ImGuiTestEngine_RunTest(ImGuiTestEngine* engine, ImGuiTestContext* parent_c
             strcpy(ctx->Clipboard.Data, text);
         };
         io.ClipboardUserData = ctx;
+#endif
     }
+
+    // Setup IO: error handling
+    ImGuiTestEngine_ErrorRecoverySetup(engine);
 
     // Mark as currently running the TestFunc (this is the only time when we are allowed to yield)
     IM_ASSERT(ctx->ActiveFunc == ImGuiTestActiveFunc_None || ctx->ActiveFunc == ImGuiTestActiveFunc_TestFunc);
@@ -1677,7 +1782,7 @@ void ImGuiTestEngine_RunTest(ImGuiTestEngine* engine, ImGuiTestContext* parent_c
         }
 
         // Recover missing End*/Pop* calls.
-        ctx->RecoverFromUiContextErrors();
+        ImGuiTestEngine_ErrorRecoveryRun(engine);
 
         if (engine->IO.ConfigRunSpeed != ImGuiTestRunSpeed_Fast)
             ctx->SleepStandard();
@@ -1773,6 +1878,85 @@ void ImGuiTestEngine_RunTest(ImGuiTestEngine* engine, ImGuiTestContext* parent_c
 
     IM_ASSERT(engine->TestContext == ctx);
     engine->TestContext = parent_ctx;
+}
+
+#if IMGUI_VERSION_NUM < 19123
+static void LogAsWarningFunc(void* user_data, const char* fmt, ...)
+{
+    ImGuiTestContext* ctx = (ImGuiTestContext*)user_data;
+    va_list args;
+    va_start(args, fmt);
+    ctx->LogExV(ImGuiTestVerboseLevel_Warning, ImGuiTestLogFlags_None, fmt, args);
+    va_end(args);
+}
+
+static void LogAsDebugFunc(void* user_data, const char* fmt, ...)
+{
+    ImGuiTestContext* ctx = (ImGuiTestContext*)user_data;
+    va_list args;
+    va_start(args, fmt);
+    ctx->LogExV(ImGuiTestVerboseLevel_Debug, ImGuiTestLogFlags_None, fmt, args);
+    va_end(args);
+}
+#else
+static void LogAsWarningFunc(ImGuiContext*, void* user_data, const char* msg)
+{
+    ImGuiContext& g = *GImGui;
+    ImGuiTestContext* ctx = (ImGuiTestContext*)user_data;
+    ImGuiWindow* window = g.CurrentWindow;
+    ctx->LogEx(ImGuiTestVerboseLevel_Warning, ImGuiTestLogFlags_None, "In '%s': %s", window ? window->Name : "NULL", msg);
+}
+static void LogAsDebugFunc(ImGuiContext*, void* user_data, const char* msg)
+{
+    ImGuiContext& g = *GImGui;
+    ImGuiTestContext* ctx = (ImGuiTestContext*)user_data;
+    ImGuiWindow* window = g.CurrentWindow;
+    ctx->LogEx(ImGuiTestVerboseLevel_Debug, ImGuiTestLogFlags_None, "In '%s': %s", window ? window->Name : "NULL", msg);
+}
+#endif
+
+void ImGuiTestEngine_ErrorRecoverySetup(ImGuiTestEngine* engine)
+{
+    ImGuiTestContext* ctx = engine->TestContext;
+    IM_ASSERT(ctx != NULL);
+    IM_ASSERT(ctx->Test != NULL);
+#if IMGUI_VERSION_NUM >= 19123
+    if (ctx->Test->Flags & ImGuiTestFlags_NoRecoveryWarnings)
+    {
+        ctx->UiContext->IO.ConfigErrorRecoveryEnableAssert = false;
+        ctx->UiContext->ErrorCallback = LogAsDebugFunc;
+        ctx->UiContext->ErrorCallbackUserData = ctx;
+    }
+    else
+    {
+        ctx->UiContext->ErrorCallback = LogAsWarningFunc;
+        ctx->UiContext->ErrorCallbackUserData = ctx;
+    }
+#else
+    IM_UNUSED(ctx);
+#endif
+}
+
+void ImGuiTestEngine_ErrorRecoveryRun(ImGuiTestEngine* engine)
+{
+    ImGuiTestContext* ctx = engine->TestContext;
+    IM_ASSERT(ctx != NULL);
+    IM_ASSERT(ctx->Test != NULL);
+    ImGuiTestEngine_ErrorRecoverySetup(engine);
+
+#if IMGUI_VERSION_NUM < 19123
+    // If we are _already_ in a test error state, recovering is normal so we'll hide the log.
+    const bool verbose = (ctx->TestOutput->Status != ImGuiTestStatus_Error) || (engine->IO.ConfigVerboseLevel >= ImGuiTestVerboseLevel_Debug);
+    if (verbose && (ctx->Test->Flags & ImGuiTestFlags_NoRecoveryWarnings) == 0)
+        ImGui::ErrorCheckEndFrameRecover(LogAsWarningFunc, ctx);
+    else
+        ImGui::ErrorCheckEndFrameRecover(LogAsDebugFunc, ctx);
+#else
+    // This would automatically be done in EndFrame() but doing it here means we get a report earlier and in the right co-routine.
+    // And the state we entered in happens to be the NewFrame() state (hence using g.StackSizesInNewFrame)
+    ImGuiContext& g = *GImGui;
+    ImGui::ErrorRecoveryTryToRecoverState(&g.StackSizesInNewFrame);
+#endif
 }
 
 //-------------------------------------------------------------------------
@@ -1915,7 +2099,11 @@ static void ImGuiTestEngineHook_ItemAdd_GatherTask(ImGuiContext* ui_ctx, ImGuiTe
         item->RectClipped.ClipWithFull(item->RectFull);
         item->NavLayer = window->DC.NavLayerCurrent;
         item->Depth = result_depth;
-        item->InFlags = item_data ? item_data->InFlags : ImGuiItemFlags_None;
+#if IMGUI_VERSION_NUM >= 19135
+        item->ItemFlags = item_data ? item_data->ItemFlags : ImGuiItemFlags_None;
+#else
+        item->ItemFlags = item_data ? item_data->InFlags : ImGuiItemFlags_None;
+#endif
         item->StatusFlags = item_data ? item_data->StatusFlags : ImGuiItemStatusFlags_None;
         task->LastItemInfo = item;
     }
@@ -1944,7 +2132,11 @@ void ImGuiTestEngineHook_ItemAdd(ImGuiContext* ui_ctx, ImGuiID id, const ImRect&
         item->RectClipped.ClipWithFull(item->RectFull);
         item->NavLayer = window->DC.NavLayerCurrent;
         item->Depth = 0;
-        item->InFlags = item_data ? item_data->InFlags : ImGuiItemFlags_None;
+#if IMGUI_VERSION_NUM >= 19135
+        item->ItemFlags = item_data ? item_data->ItemFlags : ImGuiItemFlags_None;
+#else
+        item->ItemFlags = item_data ? item_data->InFlags : ImGuiItemFlags_None;
+#endif
         item->StatusFlags = item_data ? item_data->StatusFlags : ImGuiItemStatusFlags_None;
     }
 
@@ -2091,6 +2283,8 @@ void ImGuiTestEngineHook_ItemInfo(ImGuiContext* ui_ctx, ImGuiID id, const char* 
 void ImGuiTestEngineHook_Log(ImGuiContext* ui_ctx, const char* fmt, ...)
 {
     ImGuiTestEngine* engine = (ImGuiTestEngine*)ui_ctx->TestEngine;
+    if (engine == NULL || engine->TestContext == NULL)
+        return;
 
     va_list args;
     va_start(args, fmt);

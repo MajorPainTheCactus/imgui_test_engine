@@ -20,6 +20,12 @@
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #endif
 
+// We want all imstb_textedit.h structures
+namespace ImStb
+{
+#include "imstb_textedit.h"
+}
+
 //-------------------------------------------------------------------------
 // Ideas/Specs for future tests
 // It is important we take the habit to write those down.
@@ -35,6 +41,10 @@
 //-------------------------------------------------------------------------
 
 struct StrVars { Str str; };
+
+#if IMGUI_VERSION_NUM < 19143
+#define TextLen CurLenA
+#endif
 
 void RegisterTests_WidgetsInputText(ImGuiTestEngine* e)
 {
@@ -63,8 +73,8 @@ void RegisterTests_WidgetsInputText(ImGuiTestEngine* e)
         ctx->ItemClick("InputText");
         ctx->KeyCharsAppendEnter(u8"World123\u00A9");
         IM_CHECK_STR_EQ(buf, u8"HelloWorld123\u00A9");
-        IM_CHECK_EQ(state.CurLenA, 15);
-        IM_CHECK_EQ(state.CurLenW, 14);
+        IM_CHECK_EQ(state.TextLen, 15);
+        //IM_CHECK_EQ(state.CurLenW, 14);
 
         // Delete
         ctx->ItemClick("InputText");
@@ -73,8 +83,8 @@ void RegisterTests_WidgetsInputText(ImGuiTestEngine* e)
         ctx->KeyPress(ImGuiKey_Backspace, 3);     // Delete selection and two more characters
         ctx->KeyPress(ImGuiKey_Enter);
         IM_CHECK_STR_EQ(buf, "HelloWorld");
-        IM_CHECK_EQ(state.CurLenA, 10);
-        IM_CHECK_EQ(state.CurLenW, 10);
+        IM_CHECK_EQ(state.TextLen, 10);
+        //IM_CHECK_EQ(state.CurLenW, 10);
 
         // Insert, Cancel
         ctx->ItemClick("InputText");
@@ -82,8 +92,8 @@ void RegisterTests_WidgetsInputText(ImGuiTestEngine* e)
         ctx->KeyChars("XXXXX");
         ctx->KeyPress(ImGuiKey_Escape);
         IM_CHECK_STR_EQ(buf, "HelloWorld");
-        IM_CHECK_EQ(state.CurLenA, 10);
-        IM_CHECK_EQ(state.CurLenW, 10);
+        IM_CHECK_EQ(state.TextLen, 10);
+        //IM_CHECK_EQ(state.CurLenW, 10);
 
         // Delete, Cancel
         ctx->ItemClick("InputText");
@@ -91,8 +101,8 @@ void RegisterTests_WidgetsInputText(ImGuiTestEngine* e)
         ctx->KeyPress(ImGuiKey_Backspace, 5);
         ctx->KeyPress(ImGuiKey_Escape);
         IM_CHECK_STR_EQ(buf, "HelloWorld");
-        IM_CHECK_EQ(state.CurLenA, 10);
-        IM_CHECK_EQ(state.CurLenW, 10);
+        IM_CHECK_EQ(state.TextLen, 10);
+        //IM_CHECK_EQ(state.CurLenW, 10);
 
         // Read-only mode
         strcpy(buf, "Some read-only text.");
@@ -101,8 +111,8 @@ void RegisterTests_WidgetsInputText(ImGuiTestEngine* e)
         ctx->ItemClick("InputText");
         ctx->KeyCharsAppendEnter("World123");
         IM_CHECK_STR_EQ(buf, vars.Str1);
-        IM_CHECK_EQ(state.CurLenA, 20);
-        IM_CHECK_EQ(state.CurLenW, 20);
+        IM_CHECK_EQ(state.TextLen, 20);
+        //IM_CHECK_EQ(state.CurLenW, 20);
 
         // Space as key (instead of Space as character) -> check not conflicting with Nav Activate (#4552)
         vars.Bool1 = false;
@@ -159,7 +169,7 @@ void RegisterTests_WidgetsInputText(ImGuiTestEngine* e)
 #endif
 
         ImGuiInputTextState& input_text_state = g.InputTextState;
-        ImStb::StbUndoState& undo_state = input_text_state.Stb.undostate;
+        ImStb::StbUndoState& undo_state = input_text_state.Stb->undostate;
         IM_CHECK_EQ(input_text_state.ID, g.ActiveId);
         IM_CHECK_EQ(undo_state.undo_point, 0);
         IM_CHECK_EQ(undo_state.undo_char_point, 0);
@@ -220,14 +230,16 @@ void RegisterTests_WidgetsInputText(ImGuiTestEngine* e)
     {
         ImGuiContext& g = *ctx->UiContext;
         StrVars& vars = ctx->GetVars<StrVars>();
+        ImStb::STB_TexteditState& stb = *g.InputTextState.Stb;
+
         ctx->SetRef("Test Window");
         ctx->ItemClick("Field1");
         ctx->KeyCharsAppend("Hello, world!");
-        IM_CHECK_GT(g.InputTextState.Stb.undostate.undo_point, 0);
+        IM_CHECK_GT(stb.undostate.undo_point, 0);
         ctx->KeyPress(ImGuiKey_Escape);
         vars.str = "Foobar";
         ctx->ItemClick("Field1");
-        IM_CHECK_EQ(g.InputTextState.Stb.undostate.undo_point, 0);
+        IM_CHECK_EQ(stb.undostate.undo_point, 0);
     };
 #endif
 
@@ -371,7 +383,7 @@ void RegisterTests_WidgetsInputText(ImGuiTestEngine* e)
         ctx->ItemClick("Hello");
         ImGuiInputTextState* state = ImGui::GetInputTextState(ctx->GetID("Hello"));
         IM_CHECK(state != NULL);
-        IM_CHECK(state->Stb.single_line == 1);
+        IM_CHECK(state->Stb->single_line == 1);
 
         // Toggling from InputInt() to BeginCombo() (#6304)
 #if IMGUI_VERSION_NUM >= 18949
@@ -389,7 +401,7 @@ void RegisterTests_WidgetsInputText(ImGuiTestEngine* e)
         ctx->ItemClick("Hello");
         state = ImGui::GetInputTextState(ctx->GetID("Hello"));
         IM_CHECK(state != NULL);
-        IM_CHECK(state->Stb.single_line == 0);
+        IM_CHECK(state->Stb->single_line == 0);
     };
 
     // ## Test that InputText doesn't append two tab characters if the backend supplies both tab key and character
@@ -487,11 +499,12 @@ void RegisterTests_WidgetsInputText(ImGuiTestEngine* e)
 #endif
 
     // ## Test input text multiline cursor movement: left, up, right, down, origin, end, ctrl+origin, ctrl+end, page up, page down
+    // ## Test on multi-byte characters (see Set 2)
     // TODO ## Test input text multiline cursor with selection: left, up, right, down, origin, end, ctrl+origin, ctrl+end, page up, page down
     // TODO ## Test input text multiline scroll movement only: ctrl + (left, up, right, down)
     // TODO ## Test input text multiline page up/page down history ?
     t = IM_REGISTER_TEST(e, "widgets", "widgets_inputtext_cursor");
-    struct InputTextCursorVars { Str str; int Cursor = 0; int LineCount = 10; Str64 Password; };
+    struct InputTextCursorVars { Str str; /*int Cursor = 0;*/ int LineCount = 10; Str64 Password; };
     t->SetVarsDataType<InputTextCursorVars>();
     t->GuiFunc = [](ImGuiTestContext* ctx)
     {
@@ -501,7 +514,7 @@ void RegisterTests_WidgetsInputText(ImGuiTestEngine* e)
         ImGui::Begin("Test Window", NULL, ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize);
         ImGui::InputTextMultiline("Field", &vars.str, ImVec2(300, height), ImGuiInputTextFlags_EnterReturnsTrue);
         if (ImGuiInputTextState* state = ImGui::GetInputTextState(ctx->GetID("//Test Window/Field")))
-            ImGui::Text("Stb Cursor: %d", state->Stb.cursor);
+            ImGui::Text("Stb Cursor: %d", state->Stb->cursor);
         ImGui::End();
     };
     t->TestFunc = [](ImGuiTestContext* ctx)
@@ -522,8 +535,8 @@ void RegisterTests_WidgetsInputText(ImGuiTestEngine* e)
 
         ImGuiInputTextState* state = ImGui::GetInputTextState(ctx->GetID("Field"));
         IM_CHECK(state != NULL);
-        ImStb::STB_TexteditState& stb = state->Stb;
-        vars.Cursor = stb.cursor;
+        ImStb::STB_TexteditState& stb = *state->Stb;
+        //vars.Cursor = stb.cursor;
 
         const int page_size = (vars.LineCount / 2) - 1;
 
@@ -641,7 +654,7 @@ void RegisterTests_WidgetsInputText(ImGuiTestEngine* e)
         // Empty buffer
         ctx->KeyCharsReplace("");
         IM_CHECK_EQ(stb.cursor, 0);
-        IM_CHECK_EQ(state->CurLenA, 0);
+        IM_CHECK_EQ(state->TextLen, 0);
         ctx->KeyPress(ImGuiKey_UpArrow);
         IM_CHECK_EQ(stb.cursor, 0);
         ctx->KeyPress(ImGuiKey_DownArrow);
@@ -655,7 +668,7 @@ void RegisterTests_WidgetsInputText(ImGuiTestEngine* e)
         // Extra test for #6783, long line trailed with \n, pressing down.
         // This is almost exercised elsewhere but didn't crash with small values until we added bound-check in STB_TEXTEDIT_GETCHAR() too.
         ctx->KeyCharsReplace("Click this text then press down-arrow twice to cause an assert.\n");
-        IM_CHECK_EQ(stb.cursor, state->CurLenA);
+        IM_CHECK_EQ(stb.cursor, state->TextLen);
         ctx->KeyPress(ImGuiKey_DownArrow);
 #endif
     };
@@ -809,7 +822,48 @@ void RegisterTests_WidgetsInputText(ImGuiTestEngine* e)
                 // FIXME-TODO: More tests needed.
             }
 
-            // [SET 2]
+#if IMGUI_VERSION_NUM >= 19114
+            // [SET 2: multibytes codepoints]
+            ctx->KeyCharsReplace("\xE3\x83\x8F\xE3\x83\xAD\xE3\x83\xBC" "\xE3\x80\x80" "\xE4\xB8\x96\xE7\x95\x8C" "\xE3\x80\x82"); // "HARO- SEKAI. " (with double-width space)
+            KeyPressAndDebugPrint(ImGuiKey_Home);
+            IM_CHECK_EQ(state->GetCursorPos(), 0); // "|HARO- "
+            if (!is_osx)
+            {
+                // Windows
+                KeyPressAndDebugPrint(chord_word_next);
+                IM_CHECK_EQ(state->GetCursorPos(), 4*3);                //  "HARO- |"
+                KeyPressAndDebugPrint(chord_word_prev);
+                IM_CHECK_EQ(state->GetCursorPos(), 0);                  // "|HARO- "
+                for (int n = 0; n < 3; n++)
+                    KeyPressAndDebugPrint(ImGuiKey_RightArrow);
+                IM_CHECK_EQ(state->GetCursorPos(), 3*3);        // "HARO-| "
+                KeyPressAndDebugPrint(chord_word_next);
+                IM_CHECK_EQ(state->GetCursorPos(), 4*3);        // "HARO- |"
+
+                KeyPressAndDebugPrint(chord_word_next);
+                IM_CHECK_EQ(state->GetCursorPos(), 4*3 + 2*3);  // "HARO- SEKAI|." // VS(Win) does this, GitHub-Web(Win) doesn't.
+                KeyPressAndDebugPrint(chord_word_next);
+                IM_CHECK_EQ(state->GetCursorPos(), 4*3 + 3*3);  // "HARO- SEKAI.|"
+
+                //... not duplicating all tests, we just want basic coverage that multi-byte UTF-8 codepoints are correctly taken into account.
+
+                ctx->KeyPress(ImGuiKey_End);
+                IM_CHECK_EQ(state->GetCursorPos(), 4*3 + 3*3);  // "HARO- SEKAI.|"
+
+                KeyPressAndDebugPrint(chord_word_prev);
+                IM_CHECK_EQ(state->GetCursorPos(), 4*3 + 2*3);  // "HARO- SEKAI|." // VS-Win: STOP, GitHubWeb-Win: SKIP
+                KeyPressAndDebugPrint(chord_word_prev);
+                IM_CHECK_EQ(state->GetCursorPos(), 4*3);        // "HARO- |"
+
+                KeyPressAndDebugPrint(chord_word_prev);
+                IM_CHECK_EQ(state->GetCursorPos(), 0);          // "!HARO- SEKAI."
+
+                KeyPressAndDebugPrint(chord_word_prev);
+                IM_CHECK_EQ(state->GetCursorPos(), 0);          // (no-op)
+            }
+#endif
+
+            // [SET 3]
             // Delete all, Extra Test with Multiple Spaces
             ctx->KeyCharsReplace("Hello     world.....HELLO");
             KeyPressAndDebugPrint(ImGuiKey_Home);
@@ -854,7 +908,7 @@ void RegisterTests_WidgetsInputText(ImGuiTestEngine* e)
         ImGui::Begin("Test Window", NULL, ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize);
         ImGui::InputText("Password", &vars.Password, ImGuiInputTextFlags_Password);
         if (ImGuiInputTextState* state = ImGui::GetInputTextState(ctx->GetID("//Test Window/Password")))
-            ImGui::Text("Stb Cursor: %d", state->Stb.cursor);
+            ImGui::Text("Stb Cursor: %d", state->Stb->cursor);
         ImGui::End();
     };
     t->TestFunc = [](ImGuiTestContext* ctx)
@@ -868,7 +922,7 @@ void RegisterTests_WidgetsInputText(ImGuiTestEngine* e)
 #if IMGUI_VERSION_NUM >= 18825
         IM_CHECK((state->Flags& ImGuiInputTextFlags_Password) != 0); // Verify flags are persistent (#5724)
 #endif
-        ImStb::STB_TexteditState& stb = state->Stb;
+        ImStb::STB_TexteditState& stb = *state->Stb;
         IM_CHECK_EQ(stb.select_start, 0);
         IM_CHECK_EQ(stb.select_end, 23);
         IM_CHECK_EQ(stb.cursor, 23);
@@ -914,9 +968,11 @@ void RegisterTests_WidgetsInputText(ImGuiTestEngine* e)
             ImGuiInputTextState* state = ImGui::GetInputTextState(ctx->GetID("Field"));
             IM_CHECK(state != NULL);
             IM_CHECK(state->HasSelection());
-            IM_CHECK(ImAbs(state->Stb.select_end - state->Stb.select_start) == selection_len);
-            IM_CHECK(state->Stb.select_end == state->Stb.cursor);
-            IM_CHECK(state->Stb.cursor == state->CurLenW - selection_len);
+            IM_CHECK(ImAbs(state->Stb->select_end - state->Stb->select_start) == selection_len);
+            IM_CHECK(state->Stb->select_end == state->Stb->cursor);
+#if IMGUI_VERSION_NUM >= 19114
+            IM_CHECK(state->Stb->cursor == state->TextLen - selection_len);
+#endif
             if (n == 1)
                 ctx->ScrollToBottom(child_window->ID);
             else
@@ -927,7 +983,9 @@ void RegisterTests_WidgetsInputText(ImGuiTestEngine* e)
         IM_CHECK(state != NULL);
         IM_CHECK(child_window->Scroll.y == 0.0f);
         ctx->KeyPress(ImGuiKey_RightArrow);
-        IM_CHECK_EQ(state->Stb.cursor, state->CurLenW);
+#if IMGUI_VERSION_NUM >= 19114
+        IM_CHECK_EQ(state->Stb->cursor, state->TextLen);
+#endif
         IM_CHECK_EQ(child_window->Scroll.y, child_window->ScrollMax.y);
     };
 
@@ -1063,6 +1121,20 @@ void RegisterTests_WidgetsInputText(ImGuiTestEngine* e)
         IM_CHECK_STR_EQ(vars.CompletionBuffer.c_str(), "Hello World");
         ctx->KeyPress(ImGuiKey_Tab);
         IM_CHECK_STR_EQ(vars.CompletionBuffer.c_str(), "Hello World.......................................");
+#if IMGUI_VERSION_NUM >= 19143
+        // Regression between 19113 and 19120
+        ctx->KeyChars("!!");
+        IM_CHECK_STR_EQ(vars.CompletionBuffer.c_str(), "Hello World.......................................!!");
+#endif
+
+        ctx->KeyCharsReplace("Hello World");
+        IM_CHECK_STR_EQ(vars.CompletionBuffer.c_str(), "Hello World");
+        ctx->KeyPress(ImGuiKey_Tab);
+        IM_CHECK_STR_EQ(vars.CompletionBuffer.c_str(), "Hello World.......................................");
+
+        // Test undo after callback changes
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_Z);
+        IM_CHECK_STR_EQ(vars.CompletionBuffer.c_str(), "Hello World");
 
         // FIXME: Not testing History callback :)
         ctx->ItemClick("History");
@@ -1078,6 +1150,12 @@ void RegisterTests_WidgetsInputText(ImGuiTestEngine* e)
         IM_CHECK_STR_EQ(vars.HistoryBuffer.c_str(), "Pressed Up!");
         ctx->KeyPress(ImGuiKey_DownArrow);
         IM_CHECK_STR_EQ(vars.HistoryBuffer.c_str(), "Pressed Down!");
+
+        // Test undo after callback changes
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_Z);
+        IM_CHECK_STR_EQ(vars.HistoryBuffer.c_str(), "Pressed Up!");
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_Z);
+        IM_CHECK_STR_EQ(vars.HistoryBuffer.c_str(), "ABCD");
 
         ctx->ItemClick("Edit");
         IM_CHECK_STR_EQ(vars.EditBuffer.c_str(), "");
@@ -1104,35 +1182,45 @@ void RegisterTests_WidgetsInputText(ImGuiTestEngine* e)
             if (data->CursorPos >= 3 && strcmp(data->Buf + data->CursorPos - 3, "abc") == 0)
             {
                 data->DeleteChars(data->CursorPos - 3, 3);
-                data->InsertChars(data->CursorPos, "\xE5\xA5\xBD"); // HAO
-                data->SelectionStart = data->CursorPos - 3;
+                data->InsertChars(data->CursorPos, "\xE5\xA5\xBD!"); // HAO!
+                data->SelectionStart = data->CursorPos - 4;
                 data->SelectionEnd = data->CursorPos;
                 return 1;
             }
             return 0;
         };
-        ImGui::InputText("Hello", vars.Str1, IM_ARRAYSIZE(vars.Str1), ImGuiInputTextFlags_CallbackAlways, callback);
+        ImGui::InputText("Hello", vars.Str1, IM_ARRAYSIZE(vars.Str1), vars.Bool1 ? ImGuiInputTextFlags_None : ImGuiInputTextFlags_CallbackAlways, callback);
         ImGui::End();
     };
     t->TestFunc = [](ImGuiTestContext* ctx)
     {
+        ImGuiTestGenericVars& vars = ctx->GenericVars;
         ctx->SetRef("Test Window");
         ctx->ItemInput("Hello");
         ImGuiInputTextState* state = &ctx->UiContext->InputTextState;
         IM_CHECK(state && state->ID == ctx->GetID("Hello"));
         ctx->KeyCharsAppend("ab");
-        IM_CHECK(state->CurLenA == 2);
-        IM_CHECK(state->CurLenW == 2);
-        IM_CHECK(strcmp(state->TextA.Data, "ab") == 0);
-        IM_CHECK(state->Stb.cursor == 2);
+        IM_CHECK(state->TextLen == 2);
+
+        //IM_CHECK(state->CurLenW == 2);
+        IM_CHECK_STR_EQ(state->TextA.Data, "ab");
+        IM_CHECK(state->Stb->cursor == 2);
         ctx->KeyCharsAppend("c");
-        IM_CHECK(state->CurLenA == 3);
-        IM_CHECK(state->CurLenW == 1);
-        IM_CHECK(strcmp(state->TextA.Data, "\xE5\xA5\xBD") == 0);
-        IM_CHECK(state->TextW.Data[0] == 0x597D);
-        IM_CHECK(state->TextW.Data[1] == 0);
-        IM_CHECK(state->Stb.cursor == 1);
-        IM_CHECK(state->Stb.select_start == 0 && state->Stb.select_end == 1);
+        // (callback triggers here)
+        IM_CHECK(state->TextLen == 3 + 1);
+        //IM_CHECK(state->CurLenW == 1);
+        IM_CHECK_STR_EQ(state->TextA.Data, "\xE5\xA5\xBD!");
+        //IM_CHECK(state->TextW.Data[0] == 0x597D);
+        //IM_CHECK(state->TextW.Data[1] == 0);
+#if IMGUI_VERSION_NUM >= 19114
+        IM_CHECK(state->Stb->cursor == 3 + 1);
+        IM_CHECK(state->Stb->select_start == 0 && state->Stb->select_end == 3 + 1);
+#endif
+
+        // Test undo after callback changes
+        vars.Bool1 = true; // Disable callback otherwise "abc" after undo will immediately we rewritten
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_Z);
+        IM_CHECK_STR_EQ(state->TextA.Data, "abc");
     };
 
     // ## Test resize callback (#3009, #2006, #1443, #1008)
@@ -1144,13 +1232,13 @@ void RegisterTests_WidgetsInputText(ImGuiTestEngine* e)
         ImGui::Begin("Test Window", NULL, ImGuiWindowFlags_NoSavedSettings);
         if (ImGui::InputText("Field1", &vars.str, ImGuiInputTextFlags_EnterReturnsTrue))
         {
-            IM_CHECK_EQ(vars.str.capacity(), 4 + 5 + 1);
+            IM_CHECK_EQ(vars.str.capacity(), 4 + 5);
             IM_CHECK_STR_EQ(vars.str.c_str(), "abcdhello");
         }
         Str str_local_unsaved = "abcd";
         if (ImGui::InputText("Field2", &str_local_unsaved, ImGuiInputTextFlags_EnterReturnsTrue))
         {
-            IM_CHECK_EQ(str_local_unsaved.capacity(), 4 + 5 + 1);
+            IM_CHECK_EQ(str_local_unsaved.capacity(), 4 + 5);
             IM_CHECK_STR_EQ(str_local_unsaved.c_str(), "abcdhello");
         }
         ImGui::End();
@@ -1160,7 +1248,7 @@ void RegisterTests_WidgetsInputText(ImGuiTestEngine* e)
     {
         StrVars& vars = ctx->GetVars<StrVars>();
         vars.str.set("abcd");
-        IM_CHECK_EQ(vars.str.capacity(), 4 + 1);
+        IM_CHECK_EQ(vars.str.capacity(), 4);
         ctx->SetRef("Test Window");
         ctx->ItemInput("Field1");
         ctx->KeyCharsAppendEnter("hello");
@@ -1191,7 +1279,7 @@ void RegisterTests_WidgetsInputText(ImGuiTestEngine* e)
 
         StrVars& vars = ctx->GetVars<StrVars>();
         ImGui::Begin("Test Window", NULL, ImGuiWindowFlags_NoSavedSettings);
-        ImGui::InputText("Field1", vars.str.c_str(), vars.str.capacity(), ImGuiInputTextFlags_CallbackHistory | ImGuiInputTextFlags_CallbackResize, callback, (void*)&vars.str);
+        ImGui::InputText("Field1", vars.str.c_str(), vars.str.capacity() + 1, ImGuiInputTextFlags_CallbackHistory | ImGuiInputTextFlags_CallbackResize, callback, (void*)&vars.str);
         ImGui::End();
     };
     t->TestFunc = [](ImGuiTestContext* ctx)
@@ -1383,6 +1471,30 @@ void RegisterTests_WidgetsInputText(ImGuiTestEngine* e)
         ctx->MouseUp(ImGuiMouseButton_Left);
         IM_CHECK_EQ(g.ActiveId, input_id);
         IM_CHECK(vars.Status.Active == 1);
+    };
+#endif
+
+    // Test refocusing while active (#4761, #7870), extra to "nav_focus_api"
+#if IMGUI_VERSION_NUM >= 19102
+    t = IM_REGISTER_TEST(e, "widgets", "widgets_inputtext_multiline_refocus");
+    t->GuiFunc = [](ImGuiTestContext* ctx)
+    {
+        ImGuiTestGenericVars& vars = ctx->GenericVars;
+        ImGui::Begin("Test Window", NULL, ImGuiWindowFlags_NoSavedSettings);
+        if (ImGui::InputTextMultiline("Field", vars.Str1, IM_ARRAYSIZE(vars.Str1), ImVec2(), ImGuiInputTextFlags_CtrlEnterForNewLine | ImGuiInputTextFlags_EnterReturnsTrue))
+            ImGui::SetKeyboardFocusHere(-1);
+        ImGui::End();
+    };
+    t->TestFunc = [](ImGuiTestContext* ctx)
+    {
+        ImGuiContext& g = *ctx->UiContext;
+        ctx->SetRef("Test Window");
+        ImGuiID input_id = ctx->GetID("Field");
+        ctx->ItemClick("Field");
+        IM_CHECK_EQ(g.ActiveId, input_id);
+        ctx->KeyChars("Hello");
+        ctx->KeyPress(ImGuiKey_Enter);
+        IM_CHECK_EQ(g.ActiveId, input_id);
     };
 #endif
 
@@ -1644,3 +1756,7 @@ void RegisterTests_WidgetsInputText(ImGuiTestEngine* e)
         }
     };
 }
+
+#if IMGUI_VERSION_NUM < 19143
+#undef TextLen
+#endif

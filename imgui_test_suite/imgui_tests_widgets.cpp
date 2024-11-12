@@ -33,6 +33,9 @@
 #if IMGUI_VERSION_NUM >= 19096
 #define IMGUI_HAS_MULTISELECT
 #endif
+#if IMGUI_VERSION_NUM < 19104
+#define ImGuiChildFlags_Borders ImGuiChildFlags_Border
+#endif
 
 //-------------------------------------------------------------------------
 // Ideas/Specs for future tests
@@ -130,8 +133,10 @@ void RegisterTests_Widgets(ImGuiTestEngine* e)
             vars.ButtonPressCount[2]++;
         if (ImGui::ButtonEx("Button3", ImVec2(0, 0), ImGuiButtonFlags_PressedOnClickReleaseAnywhere))
             vars.ButtonPressCount[3]++;
-        if (ImGui::ButtonEx("Button4", ImVec2(0, 0), ImGuiButtonFlags_Repeat))
+        ImGui::PushItemFlag(ImGuiItemFlags_ButtonRepeat, true);
+        if (ImGui::ButtonEx("Button4", ImVec2(0, 0)))
             vars.ButtonPressCount[4]++;
+        ImGui::PopItemFlag();
         ImGui::End();
     };
     t->TestFunc = [](ImGuiTestContext* ctx)
@@ -165,12 +170,18 @@ void RegisterTests_Widgets(ImGuiTestEngine* e)
         ctx->ItemClick("Button4");
         IM_CHECK_EQ(vars.ButtonPressCount[4], 1);
         ctx->MouseDown(0);
+#if IMGUI_VERSION_NUM >= 19142
+        IM_CHECK_EQ(vars.ButtonPressCount[4], 2);
+#else
         IM_CHECK_EQ(vars.ButtonPressCount[4], 1);
+#endif
         ctx->SleepNoSkip(g.IO.KeyRepeatDelay, step);
         ctx->SleepNoSkip(g.IO.KeyRepeatRate, step);
         ctx->SleepNoSkip(g.IO.KeyRepeatRate, step);
         ctx->SleepNoSkip(g.IO.KeyRepeatRate, step);
-#if IMGUI_VERSION_NUM >= 18705
+#if IMGUI_VERSION_NUM >= 19142
+        IM_CHECK_EQ(vars.ButtonPressCount[4], 2 + 1 + 3);
+#elif IMGUI_VERSION_NUM >= 18705
         IM_CHECK_EQ(vars.ButtonPressCount[4], 1 + 1 + 3);
 #else
         IM_CHECK_EQ(vars.ButtonPressCount[4], 1 + 1 + 3 * 2); // MouseRepeatRate was double KeyRepeatRate, that's not documented / or that's a bug
@@ -506,7 +517,7 @@ void RegisterTests_Widgets(ImGuiTestEngine* e)
     };
 
     // ## Test Sliders and Drags clamping values
-    t = IM_REGISTER_TEST(e, "widgets", "widgets_dragslider_clamping");
+    t = IM_REGISTER_TEST(e, "widgets", "widgets_dragslider_clamp");
     struct ImGuiDragSliderVars { float DragValue = 0.0f; float DragMin = 0.0f; float DragMax = 1.0f; float SliderValue = 0.0f; float SliderMin = 0.0f; float SliderMax = 0.0f; float ScalarValue = 0.0f; void* ScalarMinP = NULL; void* ScalarMaxP = NULL; ImGuiSliderFlags Flags = ImGuiSliderFlags_None; };
     t->SetVarsDataType<ImGuiDragSliderVars>();
     t->GuiFunc = [](ImGuiTestContext* ctx)
@@ -524,10 +535,18 @@ void RegisterTests_Widgets(ImGuiTestEngine* e)
         ImGuiContext& g = *ImGui::GetCurrentContext();
         ImGuiDragSliderVars& vars = ctx->GetVars<ImGuiDragSliderVars>();
         ctx->SetRef("Test Window");
+#if IMGUI_VERSION_NUM >= 19125
+        ImGuiSliderFlags flags[] = { ImGuiSliderFlags_None, ImGuiSliderFlags_ClampOnInput, ImGuiSliderFlags_ClampZeroRange, ImGuiSliderFlags_AlwaysClamp };
+#else
         ImGuiSliderFlags flags[] = { ImGuiSliderFlags_None, ImGuiSliderFlags_AlwaysClamp };
+#endif
         for (int i = 0; i < IM_ARRAYSIZE(flags); ++i)
         {
-            bool clamp_on_input = flags[i] == ImGuiSliderFlags_AlwaysClamp;
+#if IMGUI_VERSION_NUM >= 19125
+            bool clamp_on_input = (flags[i] & ImGuiSliderFlags_ClampOnInput) != 0;
+#else
+            bool clamp_on_input = (flags[i] & ImGuiSliderFlags_AlwaysClamp) != 0;
+#endif
             vars.Flags = flags[i];
 
             float slider_min_max[][2] = { {0.0f, 1.0f}, {0.0f, 0.0f} };
@@ -572,7 +591,11 @@ void RegisterTests_Widgets(ImGuiTestEngine* e)
                 vars.DragMax = drag_min_max[j][1];
 
                 // [0,0] is equivalent to [-FLT_MAX, FLT_MAX] range
+#if IMGUI_VERSION_NUM >= 19125
+                bool unbound = (vars.DragMin == 0.0f && vars.DragMax == 0.0f && !(vars.Flags & ImGuiSliderFlags_ClampZeroRange)) || (vars.DragMin == -FLT_MAX && vars.DragMax == FLT_MAX);
+#else
                 bool unbound = (vars.DragMin == 0.0f && vars.DragMax == 0.0f) || (vars.DragMin == -FLT_MAX && vars.DragMax == FLT_MAX);
+#endif
                 float value_before_click = 0.0f;
 
                 ctx->ItemInputValue("Drag", -3);
@@ -693,7 +716,7 @@ void RegisterTests_Widgets(ImGuiTestEngine* e)
         ImGuiTestGenericVars& vars = ctx->GenericVars;
         ImGui::Begin("Test Window", NULL, ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize);
 
-        ImGui::BeginChild("Child", ImVec2(100, 100), ImGuiChildFlags_Border);
+        ImGui::BeginChild("Child", ImVec2(100, 100), ImGuiChildFlags_Borders);
         vars.Pos = ImGui::GetCursorScreenPos();
         ImGui::Dummy(ImVec2(10, 10));
         ImGui::Button("button");
@@ -1462,6 +1485,64 @@ void RegisterTests_Widgets(ImGuiTestEngine* e)
         IM_CHECK(draw_calls >= window->DrawList->CmdBuffer.Size); // May create less :)
     };
 
+    // ## Test selection behavior of current tab
+    // (this is incomplete, mostly added to regress test for #7914)
+    t = IM_REGISTER_TEST(e, "widgets", "widgets_tabbar_select");
+    t->GuiFunc = [](ImGuiTestContext* ctx)
+    {
+        ImGuiTestGenericVars& vars = ctx->GenericVars;
+        ImGui::Begin("Test Window", NULL, ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize);
+        vars.Int2 = -1; // Open popup
+        if (ImGui::BeginTabBar("TabBar", ImGuiTabBarFlags_Reorderable))
+        {
+            for (int n = 0; n < 4; n++)
+            {
+                bool open = ImGui::BeginTabItem(Str30f("Tab %d", n).c_str());
+                if (open)
+                {
+                    vars.Int1 = n;
+                    ImGui::EndTabItem();
+                }
+
+                // Intentionally test for IsMouseClicked() and not IsMouseReleased() to test for #7914 where release reselected and closed popup.
+                // Note that #7914 was on docked Begin(), here we test at a lower level. But popup id becomes slightly more awkward if we
+                // had this code inside the BeginTabItem() block.
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup) && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+                    ImGui::OpenPopup(Str30f("Popup %d", n).c_str());
+                if (ImGui::BeginPopup(Str30f("Popup %d", n).c_str()))
+                {
+                    vars.Int2 = n;
+                    ImGui::Text("Popup %d", n);
+                    ImGui::MenuItem("Close");
+                    ImGui::EndPopup();
+                }
+            }
+            ImGui::EndTabBar();
+
+            ImGui::Separator();
+            ImGui::Text("selected: %d, open: %d", vars.Int1, vars.Int2);
+        }
+        ImGui::End();
+    };
+    t->TestFunc = [](ImGuiTestContext* ctx)
+    {
+        ImGuiTestGenericVars& vars = ctx->GenericVars;
+        ctx->SetRef("Test Window");
+        ctx->MouseMove("TabBar/Tab 1");
+        ctx->MouseClick();
+        IM_CHECK(vars.Int1 == 1); // Tab selected
+        IM_CHECK(vars.Int2 == -1);// Popup not open
+        ctx->MouseMove("TabBar/Tab 0");
+        ctx->MouseDown(ImGuiMouseButton_Right);
+        ctx->Yield(); // Takes an extra frame
+        IM_CHECK(vars.Int1 == 0); // Tab selected
+        IM_CHECK(vars.Int2 == 0); // Popup open
+        ctx->SleepShort();
+        ctx->MouseDown(ImGuiMouseButton_Left);
+        IM_CHECK(vars.Int1 == 0); // Tab selected
+        IM_CHECK(vars.Int2 == 0); // Popup still open
+    };
+
     // ## Test order of tabs in a tab bar
     t = IM_REGISTER_TEST(e, "widgets", "widgets_tabbar_order");
     t->GuiFunc = [](ImGuiTestContext* ctx)
@@ -1491,6 +1572,7 @@ void RegisterTests_Widgets(ImGuiTestEngine* e)
         vars.BoolArray[0] = vars.BoolArray[1] = vars.BoolArray[2] = true;
         ctx->Yield();
         ctx->Yield(); // Important: so tab layout are correct for TabClose()
+        ctx->Yield(); // Following "widgets_tabbar_select" // FIXME-TESTS: May be worth considering a second attempt in MouseMove() when item has moved?
         IM_CHECK(tab_bar->Tabs.Size == 3);
         IM_CHECK_STR_EQ(ImGui::TabBarGetTabName(tab_bar, &tab_bar->Tabs[0]), "Tab 0");
         IM_CHECK_STR_EQ(ImGui::TabBarGetTabName(tab_bar, &tab_bar->Tabs[1]), "Tab 1");
@@ -2790,14 +2872,18 @@ void RegisterTests_Widgets(ImGuiTestEngine* e)
     // ## Test drag sources with _SourceNoPreviewTooltip flag not producing a tooltip.
     // ## Test drag target/accept with ImGuiDragDropFlags_AcceptNoPreviewTooltip
     t = IM_REGISTER_TEST(e, "widgets", "widgets_dragdrop_no_preview_tooltip");
-    struct DragNoPreviewTooltipVars { bool TooltipWasVisible = false; bool TooltipIsVisible = false; ImGuiDragDropFlags AcceptFlags = 0; };
+    struct DragNoPreviewTooltipVars { bool TooltipHasBeenVisible = false; int TooltipLastVisibleFrame = -1; ImGuiDragDropFlags AcceptFlags = 0; };
     t->Flags |= ImGuiTestFlags_NoGuiWarmUp;
     t->SetVarsDataType<DragNoPreviewTooltipVars>();
     t->GuiFunc = [](ImGuiTestContext* ctx)
     {
+        ImGuiContext& g = *ctx->UiContext;
         DragNoPreviewTooltipVars& vars = ctx->GetVars<DragNoPreviewTooltipVars>();
 
         ImGui::Begin("Test Window", NULL, ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize);
+
+        ImGui::CheckboxFlags("_AcceptNoPreviewTooltip", &vars.AcceptFlags, ImGuiDragDropFlags_AcceptNoPreviewTooltip);
+        ImGui::Separator();
 
         auto create_drag_drop_source = [](ImGuiDragDropFlags flags)
         {
@@ -2809,7 +2895,7 @@ void RegisterTests_Widgets(ImGuiTestEngine* e)
             }
         };
 
-        ImGui::Button("Drag");
+        ImGui::Button("Drag Src No Tooltip");
         create_drag_drop_source(ImGuiDragDropFlags_SourceNoPreviewTooltip);
 
         ImGui::Button("Drag Extern");
@@ -2826,40 +2912,43 @@ void RegisterTests_Widgets(ImGuiTestEngine* e)
             ImGui::EndDragDropTarget();
         }
 
-        ImGuiContext& g = *ctx->UiContext;
-        ImGuiWindow* tooltip = ctx->GetWindowByRef(Str16f("//##Tooltip_%02d", g.TooltipOverrideCount).c_str());
-        vars.TooltipIsVisible = g.TooltipOverrideCount != 0 || (tooltip != NULL && (tooltip->Active || tooltip->WasActive));
-        if (vars.TooltipIsVisible)
-            vars.TooltipWasVisible |= vars.TooltipIsVisible;
+        ImGuiWindow* tooltip = g.TooltipPreviousWindow;
+        //ImGuiWindow* tooltip = ctx->GetWindowByRef(Str16f("//##Tooltip_%02d", g.TooltipOverrideCount).c_str());
+        if (tooltip != NULL && (tooltip->Active || tooltip->WasActive))
+        {
+            vars.TooltipLastVisibleFrame = g.FrameCount;
+            vars.TooltipHasBeenVisible = true;
+        }
 
         ImGui::End();
     };
     t->TestFunc = [](ImGuiTestContext* ctx)
     {
+        ImGuiContext& g = *ctx->UiContext;
         DragNoPreviewTooltipVars& vars = ctx->GetVars<DragNoPreviewTooltipVars>();
         ctx->SetRef("Test Window");
-        ctx->MouseMove("Drag");
-        vars.TooltipWasVisible = false;
-        ctx->ItemDragAndDrop("Drag", "Drop");
-        IM_CHECK(vars.TooltipWasVisible == false);
-        vars.TooltipWasVisible = false;
+        ctx->MouseMove("Drag Src No Tooltip");
+        vars.TooltipHasBeenVisible = false;
+        ctx->ItemDragAndDrop("Drag Src No Tooltip", "Drop");
+        IM_CHECK(vars.TooltipHasBeenVisible == false);
+        vars.TooltipHasBeenVisible = false;
         ctx->ItemDragAndDrop("Drag Extern", "Drop");
-        IM_CHECK(vars.TooltipWasVisible == false);
-        vars.TooltipWasVisible = false;
+        IM_CHECK(vars.TooltipHasBeenVisible == false);
+        vars.TooltipHasBeenVisible = false;
+        ctx->Yield();
 
         vars.AcceptFlags = 0;
         ctx->ItemDragOverAndHold("Drag Accept", "Drop");
         //ctx->Yield();   // A visible tooltip window gets hidden with one frame delay. (due to how we test for Active || WasActive)
-        IM_CHECK(vars.TooltipWasVisible == true);
-        IM_CHECK(vars.TooltipIsVisible == true);
-        ctx->MouseUp();
-        vars.TooltipWasVisible = false;
+        IM_CHECK(vars.TooltipHasBeenVisible == true);
+        IM_CHECK_EQ(vars.TooltipLastVisibleFrame + 1, g.FrameCount); // Bit wonky
+        vars.TooltipHasBeenVisible = false;
 
         vars.AcceptFlags = ImGuiDragDropFlags_AcceptNoPreviewTooltip;
         ctx->ItemDragOverAndHold("Drag Accept", "Drop");
         ctx->Yield();   // A visible tooltip window gets hidden with one frame delay (due to how we test for Active || WasActive)
-        IM_CHECK(vars.TooltipWasVisible == true);
-        IM_CHECK(vars.TooltipIsVisible == false);
+        IM_CHECK(vars.TooltipHasBeenVisible == true);
+        IM_CHECK_LT(vars.TooltipLastVisibleFrame + 1, g.FrameCount);
         ctx->MouseUp();
     };
 
@@ -3232,6 +3321,38 @@ void RegisterTests_Widgets(ImGuiTestEngine* e)
         ctx->ScrollToBottom("");
     };
 #endif
+
+    // ## Test for text wrapping with consecutive separators
+    // FIXME: This is tricky to test for at least until we finish/merge the drawlist analyzer which can parse characters from vertices.
+    // For now we manually call CalcWordWrapPositionA().
+    t = IM_REGISTER_TEST(e, "widgets", "widgets_text_wrapped_2");
+    t->GuiFunc = [](ImGuiTestContext* ctx)
+    {
+        ImGui::Begin("Test Window", NULL, ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoTitleBar);
+        const char* s1 = "abcde..";
+        const char* s2 = "abcde.. That";
+        float local_off_x = ImGui::GetCursorPos().x;
+        float wrap_width = ImGui::CalcTextSize(s1).x;
+
+        // Visualize output here, no actual test
+        ImGui::PushTextWrapPos(wrap_width + local_off_x);
+        ImGui::TextUnformatted(s1);
+        ImGui::Spacing();
+        ImGui::TextUnformatted(s2); // Though the '.' can fit in the first line, it's now at the second line.
+        ImGui::PopTextWrapPos();
+        ImGui::End();
+
+        // Tests
+        const char* s1_w = ImGui::GetFont()->CalcWordWrapPositionA(1.0f, s1, s1 + strlen(s1), wrap_width);
+        IM_CHECK_EQ(s1_w, s1 + strlen(s1));
+
+#if IMGUI_BROKEN_TESTS
+// #if 1
+        // This is broken, see #8139
+        const char* s2_w = ImGui::GetFont()->CalcWordWrapPositionA(1.0f, s2, s2 + strlen(s2), wrap_width);
+        IM_CHECK_EQ(s2_w, s2 + strlen("abcde.."));
+#endif
+    };
 
     // ## Test LabelText() variants layout (#4004)
     t = IM_REGISTER_TEST(e, "widgets", "widgets_label_text");
@@ -3725,6 +3846,11 @@ void RegisterTests_Widgets(ImGuiTestEngine* e)
                 }
                 ImGui::EndMenu();
             }
+            if (ImGui::BeginMenu("File###Menu_File"))
+            {
+                ImGui::MenuItem("New###Menu_FileNew");
+                ImGui::EndMenu();
+            }
             ImGui::EndMenuBar();
         }
         ImGui::End();
@@ -3737,6 +3863,9 @@ void RegisterTests_Widgets(ImGuiTestEngine* e)
 
         ctx->MenuClick("First/Second");
         ctx->ItemClick("**/Item");
+
+        ctx->MenuClick("###Menu_File");
+        ctx->MenuClick("###Menu_File/###Menu_FileNew");
 
 #if IMGUI_BROKEN_TESTS
         ctx->MenuClick("First/Second");
@@ -3768,7 +3897,11 @@ void RegisterTests_Widgets(ImGuiTestEngine* e)
     t->TestFunc = [](ImGuiTestContext* ctx)
     {
         ImGuiTestGenericVars& vars = ctx->GenericVars;
+#if IMGUI_VERSION_NUM >= 19142
+        IM_CHECK_STR_EQ(vars.Str1, "[ File ] | [ Edit ]");
+#else
         IM_CHECK_STR_EQ(vars.Str1, "File | Edit");
+#endif
     };
 
     // ## Test main menubar appending.
@@ -4672,22 +4805,37 @@ void RegisterTests_Widgets(ImGuiTestEngine* e)
 #if IMGUI_VERSION_NUM >= 19071
     // ## Test box-selection + exercise Assets Browser a little.
     // This test is probably fragile because are are dealing with Assets Browser instead of duplicating it in our code.
-    t = IM_REGISTER_TEST(e, "widgets", "widgets_multiselect_boxselect");
+    t = IM_REGISTER_TEST(e, "widgets", "widgets_multiselect_boxselect_1");
     t->TestFunc = [](ImGuiTestContext* ctx)
     {
         ImGuiContext& g = *GImGui;
         ctx->MenuCheck("//Dear ImGui Demo/Examples/Assets Browser");
         ctx->SetRef("Example: Assets Browser");
+        ImGuiWindow* child_window = ctx->WindowInfo("Assets").Window;
+        IM_CHECK(child_window != NULL);
+
         ctx->WindowResize("", ImVec2(750, 600)); // FIXME: Calculated for 15 item wide (15 * 32) + (15-1+2) * 10 + Parent/Child Padding + Scrollbar
         ctx->MenuClick("File/Clear items");
         ctx->MenuClick("File/Add 10000 items");
+
+        // Zoom/unzoom
+        ctx->SetRef(child_window);
+        ctx->ItemClick("$$20");
+        ctx->KeyDown(ImGuiMod_Ctrl);
+        for (int n = 0; n < 10; n++)
+            ctx->MouseWheelY(-1.0f);
+        for (int n = 0; n < 10; n++)
+            ctx->MouseWheelY(+1.0f);
+        ctx->KeyUp(ImGuiMod_Ctrl);
+        ctx->KeyPress(ImGuiKey_Escape);
+
+        // Set specific option
+        ctx->SetRef("Example: Assets Browser");
         ctx->MenuAction(ImGuiTestAction_Open, "Options");
         ctx->ItemInputValue("//$FOCUSED/Icon Size", 32.0f);
         ctx->ItemInputValue("//$FOCUSED/Icon Spacing", 10);
         ctx->ItemInputValue("//$FOCUSED/Icon Hit Spacing", 4);
 
-        ImGuiWindow* child_window = ctx->WindowInfo("Assets").Window;
-        IM_CHECK(child_window != NULL);
         ctx->SetRef(child_window);
         ctx->ScrollToTop("");
         ImGuiMultiSelectState* ms_storage = ImGui::GetMultiSelectState(ctx->GetID(""));
@@ -4732,7 +4880,79 @@ void RegisterTests_Widgets(ImGuiTestEngine* e)
         ctx->MouseUp(0);
         IM_CHECK_GT(child_window->Scroll.y, 0.0f);
 
+        ctx->KeyPress(ImGuiKey_Escape);
+
         ctx->MenuUncheck("//Dear ImGui Demo/Examples/Assets Browser");
+    };
+#endif
+
+#if IMGUI_VERSION_NUM >= 19114
+    // ## Test box-selection in table with decorations (#7970, #7821)
+    t = IM_REGISTER_TEST(e, "widgets", "widgets_multiselect_boxselect_2");
+    struct BoxSelectTestVars { ImGuiTableFlags TableFlags = ImGuiTableFlags_ScrollY; ImGuiSelectionBasicStorage Selection; bool FrozenHeaders = false; };
+    t->SetVarsDataType<BoxSelectTestVars>();
+    t->GuiFunc = [](ImGuiTestContext* ctx)
+    {
+        auto& vars = ctx->GetVars<BoxSelectTestVars>();
+        ImGui::SetNextWindowSize(ImVec2(400.0f, 300.0f), ImGuiCond_Appearing);
+        ImGui::Begin("Test Window", NULL, ImGuiWindowFlags_NoSavedSettings);
+        ImGui::CheckboxFlags("BordersOuter", &vars.TableFlags, ImGuiTableFlags_BordersOuter);
+        ImGui::SameLine();
+        ImGui::CheckboxFlags("BordersInner", &vars.TableFlags, ImGuiTableFlags_BordersInner);
+        if (ImGui::BeginTable("table1", 1, vars.TableFlags))
+        {
+            auto ms = ImGui::BeginMultiSelect(ImGuiMultiSelectFlags_BoxSelect1d, vars.Selection.Size, 1000);
+            vars.Selection.ApplyRequests(ms);
+            if (vars.FrozenHeaders)
+            {
+                ImGui::TableSetupScrollFreeze(0, 1);
+                ImGui::TableHeadersRow();
+            }
+            for (unsigned i = 0; i < 1000; i++)
+            {
+                char buf[32];
+                snprintf(buf, sizeof buf, "Item %03d", i);
+                ImGui::SetNextItemSelectionUserData(i);
+                ImGui::TableNextColumn();
+                ImGui::Selectable(buf, vars.Selection.Contains(i));
+            }
+            ms = ImGui::EndMultiSelect();
+            vars.Selection.ApplyRequests(ms);
+            ImGui::EndTable();
+        }
+        ImGui::End();
+    };
+    t->TestFunc = [](ImGuiTestContext* ctx)
+    {
+        auto& vars = ctx->GetVars<BoxSelectTestVars>();
+        ImGuiTable* table = ImGui::TableFindByID(ctx->GetID("Test Window/table1"));
+        IM_CHECK(table != NULL);
+
+        for (int step = 0; step < 4; step++)
+        {
+            vars.Selection.Clear();
+            vars.TableFlags = (step & 1) ? (vars.TableFlags | ImGuiTableFlags_BordersOuter) : (vars.TableFlags & ~ImGuiTableFlags_BordersOuter);
+            vars.FrozenHeaders = (step & 2) != 0;
+
+            ctx->SetRef(table->ID);
+            ctx->MouseMove("Item 001");
+            ctx->MouseDown(ImGuiMouseButton_Left);
+            //ctx->SetRef("//$FOCUSED");
+            ctx->MouseMoveToPos(ImGui::GetIO().MousePos + ImVec2(0, ctx->GetWindowByRef("//Test Window")->Size.y));
+            ctx->SleepNoSkip(1.0f, 0.05f);
+            ctx->MouseUp(ImGuiMouseButton_Left);
+            IM_CHECK(vars.Selection.Contains(0) == false);
+            int first_selected = 1;
+            int last_selected = 1;
+            for (int n = 1; n < 1000; n++)
+            {
+                if (vars.Selection.Contains(n) == false)
+                    break;
+                last_selected = n;
+            }
+            IM_CHECK(vars.Selection.Size > 1);
+            IM_CHECK_EQ(vars.Selection.Size, last_selected - first_selected + 1); // Check no selection gap (#7970)
+        }
     };
 #endif
 
@@ -5380,6 +5600,7 @@ void RegisterTests_Widgets(ImGuiTestEngine* e)
             ImGui::EndMenuBar();
         }
 
+        ImGui::Checkbox("WidgetsDisabled", &vars.WidgetsDisabled);
         ImGui::Selectable("Enabled A");
         int index = 0;
 
@@ -5471,6 +5692,16 @@ void RegisterTests_Widgets(ImGuiTestEngine* e)
             IM_CHECK(vars.HoveredDisabled[i] == true);              // IsItemHovered with ImGuiHoveredFlags_AllowWhenDisabled.
             IM_CHECK(g.HoveredId == ctx->GetID(disabled_items[i])); // Will set HoveredId even when disabled.
         }
+
+        // Verify that clicking on a disabled item takes focus
+#if IMGUI_VERSION_NUM >= 19135
+        for (int i = 0; i < IM_ARRAYSIZE(disabled_items); i++)
+        {
+            ctx->WindowFocus("//Dear ImGui Demo");
+            ctx->ItemClick(disabled_items[i]);
+            IM_CHECK_EQ(g.NavWindow, window);
+        }
+#endif
 
         // Dragging a disabled item.
         ImVec2 window_pos = window->Pos;
@@ -5658,7 +5889,7 @@ void RegisterTests_Widgets(ImGuiTestEngine* e)
         ImGui::EndDisabled();
 
         // Case 3: SetNextItemShortcut() NOT within disabled block but with disabled item
-        // this will generally be handled by the 'if (g.LastItemData.InFlags & ImGuiItemFlags_Disabled)' check in ItemHandleShortcut()
+        // this will generally be handled by the 'if (g.LastItemData.ItemFlags & ImGuiItemFlags_Disabled)' check in ItemHandleShortcut()
         ImGui::SetNextItemShortcut(ImGuiMod_Ctrl | ImGuiKey_U);
         if (ImGui::Selectable("Ctrl+U", false, ImGuiSelectableFlags_Disabled))
             vars.Count++;
