@@ -1768,6 +1768,10 @@ void ImGuiTestEngine_RunTest(ImGuiTestEngine* engine, ImGuiTestContext* parent_c
                     ctx->Yield();
         }
 
+        // Post-test callback (e.g. for per-test screenshots)
+        if (engine->IO.PostTestFunc != NULL)
+            engine->IO.PostTestFunc(test, test_output, engine->IO.PostTestUserData);
+
         // Capture failure screenshot.
         if (ctx->IsError() && engine->IO.ConfigCaptureOnError)
         {

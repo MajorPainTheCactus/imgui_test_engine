@@ -43,6 +43,7 @@ struct ImGuiTestEngineIO;           // Test engine public I/O
 struct ImGuiTestItemInfo;           // Info queried from item (id, geometry, status flags, debug label)
 struct ImGuiTestItemList;           // A list of items
 struct ImGuiTestInputs;             // Simulated user inputs (will be fed into ImGuiIO by the test engine)
+struct ImGuiTestOutput;             // Storage for the output of a test run
 struct ImGuiTestRunTask;            // A queued test (test + runflags)
 
 typedef int ImGuiTestFlags;         // Flags: See ImGuiTestFlags_
@@ -232,6 +233,8 @@ struct IMGUI_API ImGuiTestEngineIO
     ImFuncPtr(ImGuiScreenCaptureFunc)           ScreenCaptureFunc = NULL;       // (Optional) To capture graphics output (application _MUST_ call ImGuiTestEngine_PostSwap() function after swapping is framebuffer)
     void*                                       SrcFileOpenUserData = NULL;     // (Optional) User data for SrcFileOpenFunc
     void*                                       ScreenCaptureUserData = NULL;   // (Optional) User data for ScreenCaptureFunc
+    void                                        (*PostTestFunc)(ImGuiTest* test, ImGuiTestOutput* output, void* user_data) = NULL;  // (Optional) Called after each test completes (before cleanup)
+    void*                                       PostTestUserData = NULL;        // (Optional) User data for PostTestFunc
 
     // Options: Main
     bool                        ConfigSavedSettings = true;                     // Load/Save settings in main context .ini file.
