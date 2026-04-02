@@ -258,6 +258,8 @@ struct IMGUI_API ImGuiTestEngineIO
     ImFuncPtr(ImGuiScreenCaptureFunc)           ScreenCaptureFunc = nullptr;       // (Optional) To capture graphics output (application _MUST_ call ImGuiTestEngine_PostSwap() function after swapping is framebuffer)
     void*                                       SrcFileOpenUserData = nullptr;     // (Optional) User data for SrcFileOpenFunc
     void*                                       ScreenCaptureUserData = nullptr;   // (Optional) User data for ScreenCaptureFunc
+    void                                        (*PostTestFunc)(ImGuiTest* test, ImGuiTestOutput* output, void* user_data) = nullptr;  // (Optional) Called after each test completes (before cleanup)
+    void*                                       PostTestUserData = nullptr;        // (Optional) User data for PostTestFunc
 
     // Options: Main
     bool                        ConfigSavedSettings = true;                     // Load/Save settings in main context .ini file.
